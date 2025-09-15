@@ -1,0 +1,38 @@
+{
+  "name": "yare",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "nodemon index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.2",
+    "nodemailer": "^7.0.3",
+    "axios": "^1.6.8",
+    "backblaze-b2": "^1.7.0",
+    "bcrypt": "^6.0.0",
+    "body-parser": "^1.20.2",
+    "joi": "^17.12.2",
+    "mongodb": "^6.5.0",
+    "multer": "^1.4.5-lts.1",
+    "mutter": "^1.0.1",
+    "nodemon": "^3.1.0",
+    "otp-generator": "^4.0.1",
+    "socket.io": "^4.7.5",
+    "twilio": "^5.0.1"
+
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}
