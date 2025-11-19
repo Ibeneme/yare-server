@@ -17,10 +17,10 @@ const TeacherSchema = new Schema(
       index: true,
     },
     password: String,
-
-    // Relationships
-    courseIds: [{ type: Schema.Types.ObjectId, ref: "Course" }],
     classIds: [{ type: String }], // could be ObjectId if classes are separate model
+   
+    // Relationships
+    subjectIds: [{ type: Schema.Types.ObjectId, ref: "Subject" }],
     gradeIds: [{ type: Schema.Types.ObjectId, ref: "Grade" }],
 
     // Roles & Metadata

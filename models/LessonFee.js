@@ -7,12 +7,13 @@ const LessonFeeSchema = new mongoose.Schema({
     required: true,
   },
   payerId: { type: mongoose.Schema.Types.ObjectId },
-  payerModel: { type: String, enum: ["Parent", "Student", "admin", "parent", 'student'] },
-  duration: { type: String, required: true }, // e.g., "1 month"
+  planName: { type: String }, // new field
+  duration: { type: String, required: true },
   amount: { type: Number, required: true },
   currency: { type: String, default: "NGN" },
   expired: { type: Boolean, default: false },
-  expiresAt: { type: Date }, // calculated from duration
+  expiresAt: { type: Date },
+  reference: { type: String }, 
   paid: {
     isPaid: { type: Boolean, default: false },
     timestamp: Date,

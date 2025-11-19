@@ -6,15 +6,23 @@ const adminRoutes = require("./routers/adminRoutes");
 const adminParentRoutes = require("./routers/parentRoutes");
 const departmentRoutes = require("./routers/departmentRoutes");
 const coursesRouter = require("./routers/courseRouter");
-const userRouter = require("./routers/usersRouter");
+const userRouter = require("./routers/users.router");
 const classRoutes = require("./routers/classRoutes");
 const gradeRoutes = require("./routers/gradeRoutes");
-const resourceRouter = require("./routers/resourceRouter");
+const resourceRouter = require("./routers/resource.router");
 const settingsRouter = require("./routers/settings");
-const payrouter = require("./routers/lessonFeePayments");
+const payrouter = require("./routers/lessonfee.router");
 const http = require("http");
-const awards = require('./routers/award.routes')
+const awards = require("./routers/award.routes");
 const { Server } = require("socket.io");
+const subjectRouter = require("./routers/subject.router");
+const gradesRouter = require("./routers/grade.router");
+const classRouter = require("./routers/class.router");
+const accountsRouter = require('./routers/accounts.router')
+
+const runSubscriptionExpiryCheck = require("./cron/subscription");
+
+runSubscriptionExpiryCheck();
 
 dotenv.config();
 console.log("✅ Environment variables loaded");
@@ -26,6 +34,7 @@ try {
   console.error("❌ Failed to connect to MongoDB:", error);
   process.exit(1);
 }
+
 
 const app = express();
 
@@ -47,10 +56,10 @@ app.use("/api/admin/yare/settings", settingsRouter);
 app.use("/api/payment/yare/pay", payrouter);
 app.use("/api/awards-for-student/awarding", awards);
 
-
-
-
-
+app.use("/api/subject", subjectRouter);
+app.use("/api/grades/grades", gradesRouter);
+app.use("/api/class/class", classRouter);
+app.use("/api/accounts", accountsRouter);
 //settingsRouter
 console.log("✅ Routes configured");
 

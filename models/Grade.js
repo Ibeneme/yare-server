@@ -19,9 +19,10 @@ const gradeSchema = new mongoose.Schema(
       type: [String], // Array of class ID strings
       default: [],
     },
-    gradeIds: {
-      type: [String], // Array of student ID strings
+    subjectIds: {
+      type: [String], // Array of subject ID strings
       default: [],
+      ref: "Subject",
     },
   },
   {
@@ -31,9 +32,18 @@ const gradeSchema = new mongoose.Schema(
   }
 );
 
-// Virtual field for student count
 gradeSchema.virtual("studentCount").get(function () {
-  return this.studentIds.length;
+  return Array.isArray(this.studentIds) ? this.studentIds.length : 0;
+});
+
+// Virtual field for class count
+gradeSchema.virtual("classCount").get(function () {
+  return Array.isArray(this.classIds) ? this.classIds.length : 0;
+});
+
+// Virtual field for subject count
+gradeSchema.virtual("subjectCount").get(function () {
+  return Array.isArray(this.subjectIds) ? this.subjectIds.length : 0;
 });
 
 module.exports = mongoose.model("Grade", gradeSchema);

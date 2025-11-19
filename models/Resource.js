@@ -1,10 +1,10 @@
 const mongoose = require("mongoose");
 
 const commonFields = {
-  classId: {
+  subjectId: {
     type: mongoose.Schema.Types.ObjectId,
     required: true,
-    ref: "Class",
+    ref: "Subject",
   },
   title: {
     type: String,

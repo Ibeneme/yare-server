@@ -2,13 +2,13 @@ const mongoose = require("mongoose");
 
 const AwardSchema = new mongoose.Schema(
   {
-    title: { type: String }, // e.g. "Best in Class"
+    title: { type: String },
     description: { type: String },
 
-    course: {
+    subject: {
       _id: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "Course",
+        ref: "Subject",
         required: true,
       },
       title: { type: String, required: true },
@@ -34,10 +34,10 @@ const AwardSchema = new mongoose.Schema(
       email: { type: String, required: true },
     },
 
-    awardType: { type: String }, // e.g. "Excellence", "Participation"
+    awardType: { type: String }, 
     date: { type: Date, default: Date.now },
 
-    awardMonth: { type: String }, // e.g. "September 2025"
+    awardMonth: { type: String }, 
   },
   { timestamps: true }
 );

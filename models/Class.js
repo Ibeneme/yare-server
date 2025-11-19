@@ -10,36 +10,29 @@ const ClassSchema = new Schema(
       minlength: [3, "Class title must be at least 3 characters long"],
       maxlength: [100, "Class title cannot exceed 100 characters"],
     },
-    courseId: {
-      // New field: reference to Course model
+
+    subjectId: {
       type: Schema.Types.ObjectId,
-      ref: "Course", // Reference to your Course model
-      required: [true, "Course ID is required"],
+      ref: "Subject", // Reference to Subject model
+      required: [true, "subjectId is required"],
     },
+
     studentIds: {
-      type: [String], // Array of student ID strings
-      default: [],
-    },
-    parentIds: {
-      type: [String], // Array of student ID strings
+      type: [Schema.Types.ObjectId], // Array of student ObjectIds
+      ref: "Student",
       default: [],
     },
 
-    // departmentId: {
-    //   type: Schema.Types.ObjectId,
-    //   ref: "Department", // Reference to your Department model
-    //   required: [true, "Department is required"],
-    // },
     teacherId: {
       type: Schema.Types.ObjectId,
-      ref: "Teacher", // Reference to your Teacher model
-      //required: [true, "Teacher is required"],
+      ref: "Teacher", // Reference to Teacher model
     },
- 
+
     date: {
       type: Date,
       required: [true, "Class date is required"],
     },
+
     time: {
       type: String,
       required: [true, "Class time is required"],
@@ -48,16 +41,11 @@ const ClassSchema = new Schema(
         "Invalid time format (HH:MM)",
       ],
     },
+
     duration: {
       type: Number,
       required: [true, "Class duration is required"],
       min: [1, "Duration must be at least 1 minute"],
-    },
-    status: {
-      type: String,
-      enum: ["ongoing", "upcoming", "finished", "canceled"],
-      default: "upcoming",
-      required: [true, "Class status is required"],
     },
   },
   {

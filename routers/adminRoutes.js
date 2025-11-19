@@ -487,8 +487,8 @@ router.put("/self-update/:id", async (req, res) => {
 
 router.post(
   "/add-admin",
-  protect,
-  authorizeRoles("superadmin", "admin"),
+  //protect,
+  //authorizeRoles("superadmin", "admin"),
   async (req, res) => {
     const { email, password, role, firstName, lastName } = req.body;
 
@@ -509,11 +509,11 @@ router.post(
           .json({ success: false, message: "Admin already exists" });
       }
 
-      const hashedPassword = await bcrypt.hash(password, 10);
+      //const hashedPassword = await bcrypt.hash(password, 10);
 
       const newAdmin = await Admin.create({
         email,
-        password: hashedPassword,
+        password: password,
         role,
         firstName,
         lastName,

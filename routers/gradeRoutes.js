@@ -101,4 +101,30 @@ router.put("/:id", async (req, res) => {
   }
 });
 
+// DELETE grade
+router.delete("/:id", async (req, res) => {
+  try {
+    const grade = await Grade.findByIdAndDelete(req.params.id);
+
+    if (!grade) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Grade not found" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Grade deleted successfully",
+      data: grade,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to delete grade",
+      error: error.message,
+    });
+  }
+});
+
+
 module.exports = router;

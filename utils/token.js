@@ -8,7 +8,7 @@ const jwt = require("jsonwebtoken");
  * @param {string} expiresIn - Token expiration time (e.g., '1h', '7d'). Default is '1h'.
  * @returns {string} - Signed JWT token.
  */
-const generateToken = (id, userType, expiresIn = "1h") => {
+const generateToken = (id, userType, expiresIn = "24h") => {
   if (!process.env.JWT_SECRET) {
     console.error("❌ JWT_SECRET is not defined in environment variables!");
     throw new Error("Server configuration error: JWT_SECRET is missing.");

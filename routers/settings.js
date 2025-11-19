@@ -5,6 +5,30 @@ const Admin = require("../models/Admin");
 
 const router = express.Router();
 
+// 🔹 7. Get All Prices (local + international)
+router.get("/all-prices", async (req, res) => {
+  try {
+    const settings = await SettingCustomPrice.findOne(
+      {},
+      "localPrice internationalPrice"
+    );
+
+    if (!settings) {
+      return res.status(404).json({ message: "Prices not found." });
+    }
+
+    res.status(200).json({
+      message: "Prices fetched successfully",
+      data: {
+        localPrice: settings.localPrice || 0,
+        internationalPrice: settings.internationalPrice || 0,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+});
+
 router.post("/set-local-price", async (req, res) => {
   try {
     const { localPrice, id } = req.body;
@@ -149,7 +173,7 @@ router.post("/discount-feature/discounts", async (req, res) => {
     const { title, percentage } = req.body;
 
     console.log(title, percentage, "title, percentage");
-    
+
     if (!title || percentage === undefined) {
       return res
         .status(400)
