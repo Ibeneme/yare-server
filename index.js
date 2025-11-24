@@ -83,16 +83,23 @@ io.on("connection", (socket) => {
     }
 
     const existingUsers = rooms[roomId].slice();
-
     rooms[roomId].push(newUser);
     userDetails[socket.id] = { roomId, username, userId };
     socket.join(roomId);
 
-    existingUsers.forEach((existingUser) => {
-      socket.to(existingUser.id).emit("new-user-joined", newUser);
-    });
+    // Notify existing users
+    existingUsers.forEach((u) =>
+      socket.to(u.id).emit("new-user-joined", newUser)
+    );
 
-    socket.emit("existing-users", existingUsers, screenSharers[roomId]);
+    // Tell new user about existing users
+    socket.emit("existing-users", existingUsers);
+
+    // If someone is already sharing, make them send a start-screen-share to this new user
+    const currentSharer = screenSharers[roomId];
+    if (currentSharer) {
+      socket.to(currentSharer).emit("request-screen-share", socket.id);
+    }
   });
 
   socket.on("ice-candidate", (candidate, targetId) => {
@@ -123,9 +130,20 @@ io.on("connection", (socket) => {
 
   socket.on("chat-message", (msg) => {
     const user = userDetails[socket.id];
-    if (!user) return;
-    const { roomId } = user;
+  
+    console.log("Received chat message:", msg);
+  
+    if (!user) {
+      console.log("User not found for socket ID:", socket.id);
+      return;
+    }
+  
+    const { roomId, username } = user;
+  
+    console.log(`User: ${username}, Socket ID: ${socket.id}, Room: ${roomId}`);
     io.to(roomId).emit("chat-message", msg);
+  
+    console.log(`Message broadcasted to room ${roomId}:`, msg);
   });
 
   socket.on("reaction", (reaction) => {
@@ -155,6 +173,31 @@ io.on("connection", (socket) => {
       screenSharers[roomId] = socket.id;
       socket.to(roomId).emit("start-screen-share", socket.id);
     });
+  });
+
+  // When a new user joins and wants the current screen share
+  socket.on("request-current-screen-share", (newUserId) => {
+    console.log("Received request for current screen share from:", newUserId);
+
+    // Get the room of the socket that sent the request
+    const roomId = userDetails[socket.id]?.roomId;
+    console.log("Room of requesting socket:", roomId);
+
+    if (!roomId) {
+      console.log("No room found for this socket. Exiting.");
+      return;
+    }
+
+    // Get the current screen sharer for this room
+    const currentSharer = screenSharers[roomId];
+    console.log("Current screen sharer in this room:", currentSharer);
+
+    if (currentSharer) {
+      console.log(`Sending start-screen-share event to new user ${newUserId}`);
+      io.to(newUserId).emit("start-screen-share", currentSharer);
+    } else {
+      console.log("No one is currently sharing the screen in this room.");
+    }
   });
 
   socket.on("stop-screen-share", () => {
