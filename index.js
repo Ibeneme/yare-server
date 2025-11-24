@@ -19,7 +19,7 @@ const classRouter = require("./routers/class.router");
 const accountsRouter = require("./routers/accounts.router");
 const runSubscriptionExpiryCheck = require("./cron/subscription");
 const http = require("http");
-const { Server } = require("socket.io"); // <-- CORRECTED IMPORT
+const { Server } = require("socket.io");
 
 runSubscriptionExpiryCheck();
 dotenv.config();
@@ -40,7 +40,6 @@ app.use(express.urlencoded({ extended: true }));
 app.disable("x-powered-by");
 console.log("Middleware configured");
 
-// Your existing routes
 app.use("/api/admin", adminRoutes);
 app.use("/api/admin-parent", adminParentRoutes);
 app.use("/api/departments", departmentRoutes);
@@ -60,56 +59,42 @@ app.use("/api/accounts", accountsRouter);
 app.get("/", (req, res) => {
   res.send("<h1>Yare LMS + Google Meet Video Call Server Running!</h1>");
 });
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
-// --- Socket.IO Signaling Logic for Group Mesh ---
 const rooms = {};
-
-// Store a reverse map to easily find a user's username/room on disconnect
-// { 'socketId': { roomId: '...', username: '...' } }
 const userDetails = {};
+const screenSharers = {};
 
 io.on("connection", (socket) => {
   console.log("A user connected:", socket.id);
 
-  // 1. User joins the room (Now requires username)
-  socket.on("join", (roomId, username) => {
+  socket.on("join", (roomId, username, userId) => {
     if (!roomId || !username) return;
 
-    // 1a. Create the user object
-    const newUser = { id: socket.id, username };
+    const newUser = { id: socket.id, username, userId };
 
     if (!rooms[roomId]) {
       rooms[roomId] = [];
+      screenSharers[roomId] = null;
     }
 
-    // Find existing users in the room (The full objects)
     const existingUsers = rooms[roomId].slice();
 
-    // Add new user to the room list and reverse map
     rooms[roomId].push(newUser);
-    userDetails[socket.id] = { roomId, username };
+    userDetails[socket.id] = { roomId, username, userId };
     socket.join(roomId);
 
-    console.log(
-      `User ${username} (${socket.id}) joined room: ${roomId}. Users: ${rooms[roomId].length}`
-    );
-
-    // 1b. Notify all EXISTING users about the NEW user.
-    // Send the NEW user's ID and Username.
     existingUsers.forEach((existingUser) => {
       socket.to(existingUser.id).emit("new-user-joined", newUser);
     });
 
-    // 1c. Notify the NEW user about all EXISTING users.
-    // Send the list of existing user objects.
-    socket.emit("existing-users", existingUsers);
+    socket.emit("existing-users", existingUsers, screenSharers[roomId]);
   });
 
-  // 2. Relay ICE candidates (No change needed here, still uses IDs)
   socket.on("ice-candidate", (candidate, targetId) => {
     socket.to(targetId).emit("ice-candidate", socket.id, candidate);
   });
@@ -122,7 +107,6 @@ io.on("connection", (socket) => {
       stream.getVideoTracks().forEach((t) => (t.enabled = state.video));
     }
 
-    // Optional: update label or status to show peer is muted or camera off
     const labelEl = document.getElementById(`label-${peerId}`);
     if (labelEl) {
       const muteIcon = state.mic ? "" : " 🔇";
@@ -133,12 +117,10 @@ io.on("connection", (socket) => {
     }
   });
 
-  // 3. Relay Session Description (Offer/Answer) (No change needed here, still uses IDs)
   socket.on("session-description", (sdp, targetId) => {
     socket.to(targetId).emit("session-description", socket.id, sdp);
   });
 
-  // Add inside io.on("connection")
   socket.on("chat-message", (msg) => {
     const user = userDetails[socket.id];
     if (!user) return;
@@ -146,7 +128,6 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("chat-message", msg);
   });
 
-  // Reactions
   socket.on("reaction", (reaction) => {
     const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
     roomsOfUser.forEach((roomId) => {
@@ -154,7 +135,6 @@ io.on("connection", (socket) => {
     });
   });
 
-  // Raise / lower hand
   socket.on("raise-hand", (userId) => {
     const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
     roomsOfUser.forEach((roomId) => {
@@ -169,10 +149,10 @@ io.on("connection", (socket) => {
     });
   });
 
-  // screen-share events
   socket.on("start-screen-share", () => {
     const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
     roomsOfUser.forEach((roomId) => {
+      screenSharers[roomId] = socket.id;
       socket.to(roomId).emit("start-screen-share", socket.id);
     });
   });
@@ -180,36 +160,33 @@ io.on("connection", (socket) => {
   socket.on("stop-screen-share", () => {
     const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
     roomsOfUser.forEach((roomId) => {
+      if (screenSharers[roomId] === socket.id) screenSharers[roomId] = null;
       socket.to(roomId).emit("stop-screen-share", socket.id);
     });
   });
-  // Handle mute-all from host
+
   socket.on("mute-all", () => {
-    // find all rooms this socket is in
     const roomsJoined = Array.from(socket.rooms).filter((r) => r !== socket.id);
     roomsJoined.forEach((roomId) => {
-      socket.to(roomId).emit("mute-all"); // broadcast to everyone else
+      socket.to(roomId).emit("mute-all");
     });
   });
 
-  // 4. Handle Disconnect
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
 
     const user = userDetails[socket.id];
-    if (!user) return; // User wasn't in a managed room
+    if (!user) return;
 
-    const { roomId, username } = user;
+    const { roomId, username, userId } = user;
     const roomUsers = rooms[roomId];
 
     if (roomUsers) {
-      // Remove user from the room list
       const index = roomUsers.findIndex((u) => u.id === socket.id);
       if (index !== -1) {
         roomUsers.splice(index, 1);
       }
 
-      // Notify all remaining users in the room that this user left (send the ID)
       io.to(roomId).emit("user-left", socket.id);
 
       console.log(
@@ -217,12 +194,11 @@ io.on("connection", (socket) => {
       );
 
       if (roomUsers.length === 0) {
-        delete rooms[roomId]; // Clean up empty room
+        delete rooms[roomId];
         console.log(`Room ${roomId} closed.`);
       }
     }
 
-    // Remove from reverse map
     delete userDetails[socket.id];
   });
 });
@@ -230,7 +206,7 @@ io.on("connection", (socket) => {
 app.get("/", (req, res) => {
   res.send(`
     <h1>YARE VIDEO SERVER IS RUNNING!</h1>
-    <p>Rooms active: ${rooms.size}</p>
+    <p>Rooms active: ${Object.keys(rooms).length}</p>
     <p>Users online: ${io.engine.clientsCount}</p>
   `);
 });
