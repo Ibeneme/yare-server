@@ -65,184 +65,236 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
-const rooms = {};
-const userDetails = {};
-const screenSharers = {};
+// State Management
+const rooms = {}; // { roomId: [socketId1, socketId2] }
+const socketToRoom = {}; // { socketId: roomId }
+const userDetails = {}; // { socketId: { username, id } }
+const screenSharers = {}; // { roomId: socketId }
+const roomMuteState = {};
+const usernameToSocket = {}; // { username: socketId }
 
 io.on("connection", (socket) => {
-  console.log("A user connected:", socket.id);
+  console.log("User Connected:", socket.id);
 
-  socket.on("join", (roomId, username, userId) => {
-    if (!roomId || !username) return;
-
-    const newUser = { id: socket.id, username, userId };
-
-    if (!rooms[roomId]) {
-      rooms[roomId] = [];
-      screenSharers[roomId] = null;
+  socket.on("join", (roomId, username) => {
+    console.log(`➡️ ${username} wants to join room ${roomId}`);
+  
+    // =====================================
+    // 🔐 ENFORCE ONE ROOM PER USERNAME
+    // =====================================
+    const existingSocketId = usernameToSocket[username];
+  
+    if (existingSocketId && existingSocketId !== socket.id) {
+      const oldSocket = io.sockets.sockets.get(existingSocketId);
+      const oldRoomId = socketToRoom[existingSocketId];
+  
+      if (oldSocket && oldRoomId) {
+        console.log(
+          `⚠️ ${username} already in room ${oldRoomId}, removing...`
+        );
+  
+        // Notify old room
+        oldSocket.to(oldRoomId).emit("user-left", existingSocketId);
+  
+        // Screen share cleanup
+        if (screenSharers[oldRoomId] === existingSocketId) {
+          delete screenSharers[oldRoomId];
+          oldSocket.to(oldRoomId).emit("stop-screen-share");
+        }
+  
+        // Remove from room list
+        rooms[oldRoomId] = rooms[oldRoomId].filter(
+          (id) => id !== existingSocketId
+        );
+  
+        // Leave socket.io room
+        oldSocket.leave(oldRoomId);
+  
+        delete socketToRoom[existingSocketId];
+        delete userDetails[existingSocketId];
+  
+        // Optional: force client cleanup
+        oldSocket.emit("force-leave-room");
+      }
     }
-
-    const existingUsers = rooms[roomId].slice();
-    rooms[roomId].push(newUser);
-    userDetails[socket.id] = { roomId, username, userId };
+  
+    // Update username mapping
+    usernameToSocket[username] = socket.id;
+  
+    // =====================================
+    // ✅ NORMAL JOIN FLOW
+    // =====================================
+    if (!rooms[roomId]) rooms[roomId] = [];
+  
+    const userData = { id: socket.id, username };
+    userDetails[socket.id] = userData;
+    socketToRoom[socket.id] = roomId;
+  
+    const usersInRoom = rooms[roomId].map((id) => userDetails[id]);
+  
+    socket.emit("existing-users", usersInRoom, screenSharers[roomId] || null);
+  
+    rooms[roomId].push(socket.id);
     socket.join(roomId);
-
-    // Notify existing users
-    existingUsers.forEach((u) =>
-      socket.to(u.id).emit("new-user-joined", newUser)
-    );
-
-    // Tell new user about existing users
-    socket.emit("existing-users", existingUsers);
-
-    // If someone is already sharing, make them send a start-screen-share to this new user
-    const currentSharer = screenSharers[roomId];
-    if (currentSharer) {
-      socket.to(currentSharer).emit("request-screen-share", socket.id);
+  
+    if (screenSharers[roomId]) {
+      io.to(screenSharers[roomId]).emit(
+        "prepare-late-joiner-screen",
+        socket.id
+      );
     }
+  
+    socket.to(roomId).emit("new-user-joined", userData);
+  
+    console.log(`✅ ${username} joined room ${roomId}`);
+  });
+  // --- WebRTC Signaling ---
+  socket.on("session-description", (sdp, targetId) => {
+    // Forward the offer/answer to the specific peer
+    io.to(targetId).emit("session-description", socket.id, sdp);
   });
 
   socket.on("ice-candidate", (candidate, targetId) => {
-    socket.to(targetId).emit("ice-candidate", socket.id, candidate);
+    // Forward ICE candidates to the specific peer
+    io.to(targetId).emit("ice-candidate", socket.id, candidate);
   });
 
-  socket.on("peer-media-toggle", (peerId, state) => {
-    const videoEl = document.getElementById(`video-${peerId}`);
-    if (videoEl && videoEl.srcObject) {
-      const stream = videoEl.srcObject;
-      stream.getAudioTracks().forEach((t) => (t.enabled = state.mic));
-      stream.getVideoTracks().forEach((t) => (t.enabled = state.video));
-    }
-
-    const labelEl = document.getElementById(`label-${peerId}`);
-    if (labelEl) {
-      const muteIcon = state.mic ? "" : " 🔇";
-      const camIcon = state.video ? "" : " 📷❌";
-      labelEl.textContent = `${
-        peerData[peerId] || peerId
-      }${muteIcon}${camIcon}`;
+  // --- Media & Interaction States ---
+  socket.on("media-toggle", (mediaStatus) => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      socket.to(roomId).emit("media-toggle", {
+        senderId: socket.id,
+        mediaStatus,
+      });
     }
   });
 
-  socket.on("session-description", (sdp, targetId) => {
-    socket.to(targetId).emit("session-description", socket.id, sdp);
+  socket.on("raise-hand", () => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) io.in(roomId).emit("raise-hand", socket.id);
   });
 
-  socket.on("chat-message", (msg) => {
-    const user = userDetails[socket.id];
-  
-    console.log("Received chat message:", msg);
-  
-    if (!user) {
-      console.log("User not found for socket ID:", socket.id);
-      return;
-    }
-  
-    const { roomId, username } = user;
-  
-    console.log(`User: ${username}, Socket ID: ${socket.id}, Room: ${roomId}`);
-    io.to(roomId).emit("chat-message", msg);
-  
-    console.log(`Message broadcasted to room ${roomId}:`, msg);
+  socket.on("lower-hand", () => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) io.in(roomId).emit("lower-hand", socket.id);
   });
 
-  socket.on("reaction", (reaction) => {
-    const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsOfUser.forEach((roomId) => {
-      socket.to(roomId).emit("reaction", reaction);
-    });
-  });
-
-  socket.on("raise-hand", (userId) => {
-    const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsOfUser.forEach((roomId) => {
-      socket.to(roomId).emit("raise-hand", userId);
-    });
-  });
-
-  socket.on("lower-hand", (userId) => {
-    const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsOfUser.forEach((roomId) => {
-      socket.to(roomId).emit("lower-hand", userId);
-    });
-  });
-
+  // --- Screen Sharing ---
   socket.on("start-screen-share", () => {
-    const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsOfUser.forEach((roomId) => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
       screenSharers[roomId] = socket.id;
       socket.to(roomId).emit("start-screen-share", socket.id);
-    });
-  });
-
-  // When a new user joins and wants the current screen share
-  socket.on("request-current-screen-share", (newUserId) => {
-    console.log("Received request for current screen share from:", newUserId);
-
-    // Get the room of the socket that sent the request
-    const roomId = userDetails[socket.id]?.roomId;
-    console.log("Room of requesting socket:", roomId);
-
-    if (!roomId) {
-      console.log("No room found for this socket. Exiting.");
-      return;
-    }
-
-    // Get the current screen sharer for this room
-    const currentSharer = screenSharers[roomId];
-    console.log("Current screen sharer in this room:", currentSharer);
-
-    if (currentSharer) {
-      console.log(`Sending start-screen-share event to new user ${newUserId}`);
-      io.to(newUserId).emit("start-screen-share", currentSharer);
-    } else {
-      console.log("No one is currently sharing the screen in this room.");
     }
   });
 
   socket.on("stop-screen-share", () => {
-    const roomsOfUser = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsOfUser.forEach((roomId) => {
-      if (screenSharers[roomId] === socket.id) screenSharers[roomId] = null;
-      socket.to(roomId).emit("stop-screen-share", socket.id);
-    });
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      if (screenSharers[roomId] === socket.id) delete screenSharers[roomId];
+      socket.to(roomId).emit("stop-screen-share");
+    }
   });
 
+  // --- Social Features ---
+  socket.on("chat-message", (msg) => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      // Broadcast to everyone in room except sender
+      socket.to(roomId).emit("chat-message", msg);
+    }
+  });
+  socket.on("reaction", ({ reaction }) => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      // Broadcast to everyone in the room (including the sender)
+      // This ensures everyone sees the floating emoji
+      io.in(roomId).emit("reaction", {
+        userId: socket.id,
+        reaction: reaction,
+      });
+    }
+  });
+  // --- MUTE ALL (except sender) ---
+  // ===============================
+  // MUTE ALL / UNMUTE ALL
+  // ===============================
   socket.on("mute-all", () => {
-    const roomsJoined = Array.from(socket.rooms).filter((r) => r !== socket.id);
-    roomsJoined.forEach((roomId) => {
-      socket.to(roomId).emit("mute-all");
+    const roomId = socketToRoom[socket.id];
+    if (!roomId) return;
+
+    // Send to everyone EXCEPT the sender
+    socket.to(roomId).emit("force-mute", {
+      triggeredBy: socket.id,
     });
+
+    console.log(`🔇 Mute-all by ${socket.id} in room ${roomId}`);
+  });
+
+  socket.on("unmute-all", () => {
+    const roomId = socketToRoom[socket.id];
+    if (!roomId) return;
+
+    // Send to everyone EXCEPT the sender
+    socket.to(roomId).emit("force-unmute", {
+      triggeredBy: socket.id,
+    });
+
+    console.log(`🔊 Unmute-all by ${socket.id} in room ${roomId}`);
+  });
+  // --- Disconnection ---
+
+  socket.on("remove-all-users", () => {
+    const roomId = socketToRoom[socket.id];
+    if (!roomId || !rooms[roomId]) return;
+
+    console.log(`🚨 Removing all users from room ${roomId}`);
+
+    // Notify everyone in the room
+    io.in(roomId).emit("room-ended", {
+      endedBy: socket.id,
+    });
+
+    // Remove every socket from the room
+    rooms[roomId].forEach((socketId) => {
+      const s = io.sockets.sockets.get(socketId);
+      if (s) {
+        s.leave(roomId);
+      }
+
+      delete socketToRoom[socketId];
+      delete userDetails[socketId];
+    });
+
+    // Cleanup room state
+    delete rooms[roomId];
+    delete screenSharers[roomId];
+
+    console.log(`✅ Room ${roomId} fully cleared`);
   });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      // Remove user from room array
+      rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
 
-    const user = userDetails[socket.id];
-    if (!user) return;
-
-    const { roomId, username, userId } = user;
-    const roomUsers = rooms[roomId];
-
-    if (roomUsers) {
-      const index = roomUsers.findIndex((u) => u.id === socket.id);
-      if (index !== -1) {
-        roomUsers.splice(index, 1);
+      // Clean up screen sharing if they were the ones sharing
+      if (screenSharers[roomId] === socket.id) {
+        delete screenSharers[roomId];
+        socket.to(roomId).emit("stop-screen-share");
       }
 
-      io.to(roomId).emit("user-left", socket.id);
+      // Notify others
+      socket.to(roomId).emit("user-left", socket.id);
 
-      console.log(
-        `User ${username} left room ${roomId}. Remaining: ${roomUsers.length}`
-      );
-
-      if (roomUsers.length === 0) {
-        delete rooms[roomId];
-        console.log(`Room ${roomId} closed.`);
-      }
+      // Clean up room if empty
+      if (rooms[roomId].length === 0) delete rooms[roomId];
     }
-
+    delete socketToRoom[socket.id];
     delete userDetails[socket.id];
+    console.log("User Disconnected:", socket.id);
   });
 });
 
