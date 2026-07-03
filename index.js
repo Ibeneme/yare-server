@@ -56,16 +56,14 @@ app.use("/api/grades/grades", gradesRouter);
 app.use("/api/class/class", classRouter);
 app.use("/api/accounts", accountsRouter);
 
-app.get("/", (req, res) => {
-  res.send("<h1>Yare LMS + Google Meet Video Call Server Running!</h1>");
-});
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] },
 });
 
+// ===============================
 // State Management
+// ===============================
 const rooms = {}; // { roomId: [socketId1, socketId2] }
 const socketToRoom = {}; // { socketId: roomId }
 const userDetails = {}; // { socketId: { username, id } }
@@ -73,81 +71,110 @@ const screenSharers = {}; // { roomId: socketId }
 const roomMuteState = {};
 const usernameToSocket = {}; // { username: socketId }
 
+/**
+ * Fully removes a socket from whatever room it's in, notifies everyone
+ * else, and clears screen-share state if that socket was presenting.
+ * Used by "leave-room", "disconnect", and the duplicate-username kick,
+ * so cleanup logic only has to be correct in one place.
+ */
+function cleanupUserFromRoom(io, socketId) {
+  const roomId = socketToRoom[socketId];
+  if (!roomId) return null;
+
+  if (rooms[roomId]) {
+    rooms[roomId] = rooms[roomId].filter((id) => id !== socketId);
+  }
+
+  if (screenSharers[roomId] === socketId) {
+    delete screenSharers[roomId];
+    io.to(roomId).emit("stop-screen-share");
+  }
+
+  // Notify everyone else in the room (never the leaving socket itself)
+  io.to(roomId).except(socketId).emit("user-left", socketId);
+
+  const socketObj = io.sockets.sockets.get(socketId);
+  if (socketObj) socketObj.leave(roomId);
+
+  const username = userDetails[socketId]?.username;
+  if (username && usernameToSocket[username] === socketId) {
+    delete usernameToSocket[username];
+  }
+
+  delete socketToRoom[socketId];
+  delete userDetails[socketId];
+
+  if (rooms[roomId] && rooms[roomId].length === 0) {
+    delete rooms[roomId];
+    delete screenSharers[roomId];
+  }
+
+  return roomId;
+}
+
 io.on("connection", (socket) => {
   console.log("User Connected:", socket.id);
 
   socket.on("join", (roomId, username) => {
     console.log(`➡️ ${username} wants to join room ${roomId}`);
-  
+
     // =====================================
     // 🔐 ENFORCE ONE ROOM PER USERNAME
     // =====================================
     const existingSocketId = usernameToSocket[username];
-  
+
     if (existingSocketId && existingSocketId !== socket.id) {
+      console.log(
+        `⚠️ ${username} already connected elsewhere, cleaning up old session...`
+      );
+      cleanupUserFromRoom(io, existingSocketId);
+
       const oldSocket = io.sockets.sockets.get(existingSocketId);
-      const oldRoomId = socketToRoom[existingSocketId];
-  
-      if (oldSocket && oldRoomId) {
-        console.log(
-          `⚠️ ${username} already in room ${oldRoomId}, removing...`
-        );
-  
-        // Notify old room
-        oldSocket.to(oldRoomId).emit("user-left", existingSocketId);
-  
-        // Screen share cleanup
-        if (screenSharers[oldRoomId] === existingSocketId) {
-          delete screenSharers[oldRoomId];
-          oldSocket.to(oldRoomId).emit("stop-screen-share");
-        }
-  
-        // Remove from room list
-        rooms[oldRoomId] = rooms[oldRoomId].filter(
-          (id) => id !== existingSocketId
-        );
-  
-        // Leave socket.io room
-        oldSocket.leave(oldRoomId);
-  
-        delete socketToRoom[existingSocketId];
-        delete userDetails[existingSocketId];
-  
-        // Optional: force client cleanup
-        oldSocket.emit("force-leave-room");
-      }
+      if (oldSocket) oldSocket.emit("force-leave-room");
     }
-  
+
     // Update username mapping
     usernameToSocket[username] = socket.id;
-  
+
     // =====================================
     // ✅ NORMAL JOIN FLOW
     // =====================================
     if (!rooms[roomId]) rooms[roomId] = [];
-  
+
+    // Guard against the same socket joining twice (e.g. rejoining without
+    // a clean leave in between) — prevents duplicate entries in the room.
+    if (!rooms[roomId].includes(socket.id)) {
+      rooms[roomId].push(socket.id);
+    }
+
     const userData = { id: socket.id, username };
     userDetails[socket.id] = userData;
     socketToRoom[socket.id] = roomId;
-  
-    const usersInRoom = rooms[roomId].map((id) => userDetails[id]);
-  
+
+    const usersInRoom = rooms[roomId]
+      .filter((id) => id !== socket.id)
+      .map((id) => userDetails[id])
+      .filter(Boolean);
+
     socket.emit("existing-users", usersInRoom, screenSharers[roomId] || null);
-  
-    rooms[roomId].push(socket.id);
+
     socket.join(roomId);
-  
+
+    // Tell the current presenter a late joiner is arriving, so the client
+    // can double check / repair the screen-share connection if the normal
+    // "new-user-joined" flow races with it.
     if (screenSharers[roomId]) {
       io.to(screenSharers[roomId]).emit(
         "prepare-late-joiner-screen",
         socket.id
       );
     }
-  
+
     socket.to(roomId).emit("new-user-joined", userData);
-  
+
     console.log(`✅ ${username} joined room ${roomId}`);
   });
+
   // --- WebRTC Signaling ---
   socket.on("session-description", (sdp, targetId) => {
     // Forward the offer/answer to the specific peer
@@ -205,6 +232,7 @@ io.on("connection", (socket) => {
       socket.to(roomId).emit("chat-message", msg);
     }
   });
+
   socket.on("reaction", ({ reaction }) => {
     const roomId = socketToRoom[socket.id];
     if (roomId) {
@@ -212,11 +240,11 @@ io.on("connection", (socket) => {
       // This ensures everyone sees the floating emoji
       io.in(roomId).emit("reaction", {
         userId: socket.id,
-        reaction: reaction,
+        reaction,
       });
     }
   });
-  // --- MUTE ALL (except sender) ---
+
   // ===============================
   // MUTE ALL / UNMUTE ALL
   // ===============================
@@ -243,7 +271,6 @@ io.on("connection", (socket) => {
 
     console.log(`🔊 Unmute-all by ${socket.id} in room ${roomId}`);
   });
-  // --- Disconnection ---
 
   socket.on("remove-all-users", () => {
     const roomId = socketToRoom[socket.id];
@@ -259,8 +286,11 @@ io.on("connection", (socket) => {
     // Remove every socket from the room
     rooms[roomId].forEach((socketId) => {
       const s = io.sockets.sockets.get(socketId);
-      if (s) {
-        s.leave(roomId);
+      if (s) s.leave(roomId);
+
+      const username = userDetails[socketId]?.username;
+      if (username && usernameToSocket[username] === socketId) {
+        delete usernameToSocket[username];
       }
 
       delete socketToRoom[socketId];
@@ -274,33 +304,25 @@ io.on("connection", (socket) => {
     console.log(`✅ Room ${roomId} fully cleared`);
   });
 
+  // --- Graceful leave (socket stays alive — e.g. user clicks "Leave
+  // Room" and navigates elsewhere in the app, but the room needs to be
+  // told they're gone right away instead of waiting for a disconnect
+  // that may never come since the socket is shared globally) ---
+  socket.on("leave-room", () => {
+    const roomId = cleanupUserFromRoom(io, socket.id);
+    if (roomId) console.log(`👋 ${socket.id} left room ${roomId} gracefully`);
+  });
+
+  // --- Disconnection ---
   socket.on("disconnect", () => {
-    const roomId = socketToRoom[socket.id];
-    if (roomId) {
-      // Remove user from room array
-      rooms[roomId] = rooms[roomId].filter((id) => id !== socket.id);
-
-      // Clean up screen sharing if they were the ones sharing
-      if (screenSharers[roomId] === socket.id) {
-        delete screenSharers[roomId];
-        socket.to(roomId).emit("stop-screen-share");
-      }
-
-      // Notify others
-      socket.to(roomId).emit("user-left", socket.id);
-
-      // Clean up room if empty
-      if (rooms[roomId].length === 0) delete rooms[roomId];
-    }
-    delete socketToRoom[socket.id];
-    delete userDetails[socket.id];
+    cleanupUserFromRoom(io, socket.id);
     console.log("User Disconnected:", socket.id);
   });
 });
 
 app.get("/", (req, res) => {
   res.send(`
-    <h1>YARE VIDEO SERVER IS RUNNING!</h1>
+    <h1>Yare LMS + Google Meet Video Call Server Running!</h1>
     <p>Rooms active: ${Object.keys(rooms).length}</p>
     <p>Users online: ${io.engine.clientsCount}</p>
   `);
