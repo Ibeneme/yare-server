@@ -14,7 +14,11 @@ const studentSchema = new mongoose.Schema(
       ref: "Parent",
       required: true,
     },
-    gradeId: { type: mongoose.Schema.Types.ObjectId, ref: "Grade" },
+    gradeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Grade",
+      set: (v) => (v === "" ? null : v),
+    },
     userType: { type: String, default: "student" },
     languages: { type: [String], default: [] },
     skills: { type: [String], default: [] },

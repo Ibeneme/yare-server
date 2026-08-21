@@ -125,7 +125,7 @@ router.post("/pay-lesson-fee", async (req, res) => {
     log("Duration:", duration);
 
     if (
-      !parentId ||
+      //!parentId ||
       !email ||
       !studentDetails?.length ||
       !totalAmount ||
