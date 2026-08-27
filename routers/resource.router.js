@@ -8,6 +8,8 @@ const { verifyToken } = require("../utils/token");
 const Subject = require("../models/Subject");
 const Parent = require("../models/Parent");
 const Teacher = require("../models/Teacher");
+const Admin = require("../models/Admin"); // make sure you have this model
+const createAndSendNotification = require("../utils/createAndSendNotification");
 
 const models = {
   assignment: Assignment,
@@ -15,7 +17,153 @@ const models = {
   announcement: Announcement,
 };
 
-// -------------------- CREATE RESOURCE --------------------
+// ======================================================
+// HELPER: Send notifications + emails to everyone related to a subject
+// ======================================================
+const notifySubjectStakeholders = async ({
+  subjectId,
+  type, // "assignment" | "note" | "announcement"
+  title,
+  description,
+  resourceId,
+  senderId = null,
+  senderModel = null,
+}) => {
+  try {
+    // 1. Get the subject
+    const subject = await Subject.findById(subjectId)
+      .populate("teachers", "firstName lastName email")
+      .lean();
+
+    if (!subject) {
+      console.warn("Subject not found for notifications:", subjectId);
+      return;
+    }
+
+    const notifTitle = `New ${
+      type.charAt(0).toUpperCase() + type.slice(1)
+    }: ${title}`;
+    const notifDescription =
+      description || `A new ${type} has been posted in ${subject.name}.`;
+
+    // --------------------------------------------------
+    // 2. Students enrolled in this subject (isSubscribed = true)
+    // --------------------------------------------------
+    const students = await Student.find({
+      subjects: subjectId,
+      isSubscribed: true,
+    })
+      .select("_id firstName lastName email parentId")
+      .lean();
+
+    console.log(
+      `📢 Notifying ${students.length} students for subject ${subject.name}`
+    );
+
+    for (const student of students) {
+      // Notify Student
+      await createAndSendNotification({
+        title: notifTitle,
+        description: notifDescription,
+        recipientId: student._id,
+        recipientModel: "Student",
+        email: student.email,
+        emailSubject: notifTitle,
+        type,
+        relatedId: resourceId,
+        senderId,
+        senderModel,
+        meta: { subjectId, subjectName: subject.name },
+      });
+
+      // Notify Parent of this student
+      if (student.parentId) {
+        const parent = await Parent.findById(student.parentId)
+          .select("_id firstName lastName email")
+          .lean();
+
+        if (parent) {
+          await createAndSendNotification({
+            title: notifTitle,
+            description: `Your child ${student.firstName} has a new ${type} in ${subject.name}: ${title}`,
+            recipientId: parent._id,
+            recipientModel: "Parent",
+            email: parent.email,
+            emailSubject: notifTitle,
+            type,
+            relatedId: resourceId,
+            senderId,
+            senderModel,
+            meta: {
+              subjectId,
+              subjectName: subject.name,
+              studentId: student._id,
+              studentName: `${student.firstName} ${student.lastName}`,
+            },
+          });
+        }
+      }
+    }
+
+    // --------------------------------------------------
+    // 3. Teachers of this subject
+    // --------------------------------------------------
+    const teachers = subject.teachers || [];
+    console.log(`📢 Notifying ${teachers.length} teachers`);
+
+    for (const teacher of teachers) {
+      // Skip if this teacher is the one who created it
+      if (senderId && teacher._id.toString() === senderId.toString()) continue;
+
+      await createAndSendNotification({
+        title: notifTitle,
+        description: notifDescription,
+        recipientId: teacher._id,
+        recipientModel: "Teacher",
+        email: teacher.email,
+        emailSubject: notifTitle,
+        type,
+        relatedId: resourceId,
+        senderId,
+        senderModel,
+        meta: { subjectId, subjectName: subject.name },
+      });
+    }
+
+    // --------------------------------------------------
+    // 4. All Admins
+    // --------------------------------------------------
+    const admins = await Admin.find()
+      .select("_id firstName lastName email")
+      .lean();
+    console.log(`📢 Notifying ${admins.length} admins`);
+
+    for (const admin of admins) {
+      await createAndSendNotification({
+        title: notifTitle,
+        description: `${notifDescription} (Subject: ${subject.name})`,
+        recipientId: admin._id,
+        recipientModel: "Admin",
+        email: admin.email,
+        emailSubject: notifTitle,
+        type,
+        relatedId: resourceId,
+        senderId,
+        senderModel,
+        meta: { subjectId, subjectName: subject.name },
+      });
+    }
+
+    console.log("✅ All notifications + emails sent successfully");
+  } catch (err) {
+    console.error("❌ Error while sending notifications:", err.message);
+    // We don't throw – notification failure should not break the main create flow
+  }
+};
+
+// ======================================================
+// CREATE RESOURCE + SEND NOTIFICATIONS
+// ======================================================
 router.post("/add", async (req, res) => {
   console.log("🔹 POST /add called");
   try {
@@ -26,17 +174,67 @@ router.post("/add", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid type" });
     }
 
-    const NewItem = new models[type]({ subjectId, title, description });
+    if (!subjectId || !title) {
+      return res.status(400).json({
+        success: false,
+        message: "subjectId and title are required",
+      });
+    }
+
+    // Optional: get the creator from token (recommended)
+    let senderId = null;
+    let senderModel = null;
+
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      try {
+        const token = authHeader.split(" ")[1];
+        const decoded = verifyToken(token);
+        senderId = decoded.id;
+        senderModel =
+          decoded.userType === "superadmin"
+            ? "Admin"
+            : decoded.userType.charAt(0).toUpperCase() +
+              decoded.userType.slice(1);
+      } catch (e) {
+        // token optional for now
+      }
+    }
+
+    // 1. Create the resource
+    const NewItem = new models[type]({
+      subjectId,
+      title,
+      description,
+    });
     const savedItem = await NewItem.save();
 
-    return res.status(201).json({ success: true, data: savedItem });
+    // 2. Send notifications + emails (non-blocking)
+    // We fire and forget so the response is fast
+    notifySubjectStakeholders({
+      subjectId,
+      type,
+      title,
+      description,
+      resourceId: savedItem._id,
+      senderId,
+      senderModel,
+    }).catch((err) => console.error("Notification background error:", err));
+
+    return res.status(201).json({
+      success: true,
+      message: `${type} created and notifications are being sent`,
+      data: savedItem,
+    });
   } catch (error) {
     console.error("❌ Error creating item:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// -------------------- GET BY TYPE AND SUBJECT --------------------
+// ======================================================
+// GET BY TYPE AND SUBJECT
+// ======================================================
 router.post("/get", async (req, res) => {
   console.log("🔹 POST /get called");
   try {
@@ -50,6 +248,7 @@ router.post("/get", async (req, res) => {
     const items = await models[type]
       .find({ subjectId })
       .sort({ createdAt: -1 });
+
     return res.status(200).json({ success: true, data: items });
   } catch (error) {
     console.error("❌ Error fetching items:", error.message);
@@ -57,7 +256,9 @@ router.post("/get", async (req, res) => {
   }
 });
 
-// -------------------- UPDATE RESOURCE --------------------
+// ======================================================
+// UPDATE RESOURCE
+// ======================================================
 router.put("/update", async (req, res) => {
   console.log("🔹 PUT /update called");
   try {
@@ -85,7 +286,9 @@ router.put("/update", async (req, res) => {
   }
 });
 
-// -------------------- DELETE RESOURCE --------------------
+// ======================================================
+// DELETE RESOURCE
+// ======================================================
 router.delete("/delete", async (req, res) => {
   console.log("🔹 DELETE /delete called");
   try {
@@ -110,8 +313,9 @@ router.delete("/delete", async (req, res) => {
   }
 });
 
-// -------------------- GET ALL RESOURCES FOR USER --------------------
-
+// ======================================================
+// GET ALL RESOURCES FOR USER
+// ======================================================
 router.get("/getall-resources/getall-resources", async (req, res) => {
   try {
     // ---------------- AUTH ----------------
@@ -252,7 +456,7 @@ router.get("/getall-resources/getall-resources", async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        parent: true,
+        teacher: true,
         data: [
           {
             childId: teacher._id,
@@ -262,7 +466,6 @@ router.get("/getall-resources/getall-resources", async (req, res) => {
         ],
       });
     }
-
 
     return res.status(400).json({
       success: false,
@@ -277,6 +480,5 @@ router.get("/getall-resources/getall-resources", async (req, res) => {
     });
   }
 });
-
 
 module.exports = router;

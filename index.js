@@ -17,9 +17,12 @@ const subjectRouter = require("./routers/subject.router");
 const gradesRouter = require("./routers/grade.router");
 const classRouter = require("./routers/class.router");
 const accountsRouter = require("./routers/accounts.router");
+const notificationsRouter = require("./routers/notifications.router");
+
 const runSubscriptionExpiryCheck = require("./cron/subscription");
 const http = require("http");
 const { Server } = require("socket.io");
+
 
 runSubscriptionExpiryCheck();
 dotenv.config();
@@ -55,6 +58,7 @@ app.use("/api/subject", subjectRouter);
 app.use("/api/grades/grades", gradesRouter);
 app.use("/api/class/class", classRouter);
 app.use("/api/accounts", accountsRouter);
+app.use("/api/notifications", notificationsRouter);
 
 const server = http.createServer(app);
 const io = new Server(server, {

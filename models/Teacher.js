@@ -23,6 +23,8 @@ const TeacherSchema = new Schema(
     subjectIds: [{ type: Schema.Types.ObjectId, ref: "Subject" }],
     gradeIds: [{ type: Schema.Types.ObjectId, ref: "Grade" }],
 
+
+    
     // Roles & Metadata
     userType: {
       type: String,
