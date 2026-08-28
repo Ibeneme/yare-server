@@ -15,13 +15,42 @@ const Teacher = require("../models/Teacher");
 const Student = require("../models/Student");
 const Parent = require("../models/Parent");
 const router = express.Router();
-const generateToken = (id, expiresIn = "7d") => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn });
-};
+const { generateToken } = require("../utils/token");
 
 //A3-RHZ3KG-J8JXCQ-8ML6T-SBQN9-9W6HE-HAQCS
 //cXuJlwAb6hZw3Gd9YYCMdyML7zdHVqkk
 //OziGIWdqXF-qgIS9n3z9OuREXeOpOR-0ae13zRM0glS8dF5TYxT0Tv5lqalan1t
+
+// === VERIFY TOKEN ROUTE ===
+router.get("/verify-token", protect, async (req, res) => {
+  try {
+    // req.user is populated by the protect middleware
+    const admin = await Admin.findOne({ _id: req.user.id, isDeleted: false }).select("-password");
+
+    if (!admin) {
+      return res.status(404).json({ success: false, message: "Admin not found or deleted" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Token is valid",
+      data: {
+        user: {
+          _id: admin._id,
+          email: admin.email,
+          role: admin.role,
+          firstName: admin.firstName,
+          lastName: admin.lastName,
+          userType: "admin", // Explicit type mapping for frontend comparison
+        },
+        userType: "admin",
+      },
+    });
+  } catch (err) {
+    console.error("Verify token error:", err.message);
+    return res.status(500).json({ success: false, message: "Server error during token verification" });
+  }
+});
 
 router.post("/register", async (req, res) => {
   const { email, password, role, firstName, lastName } = req.body;

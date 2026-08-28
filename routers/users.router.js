@@ -1028,4 +1028,37 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
+
+// === VERIFY TOKEN ROUTE ===
+router.get("/verify-token", authMiddleware, async (req, res) => {
+  try {
+    // authMiddleware already validates the token and attaches req.user
+    const resolved = getModelByUserType(req.user.userType);
+    
+    if (!resolved) {
+      return res.status(400).json({ success: false, message: "Invalid user type in token" });
+    }
+
+    // Optional: Fetch the latest user details from the DB if you want fresh data on load
+    const user = await resolved.model.findById(req.user.id).select("-password -__v").lean();
+    
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User no longer exists" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Token is valid",
+      data: {
+        user,
+        userType: req.user.userType,
+      },
+    });
+  } catch (error) {
+    console.error("Verify token error:", error);
+    return res.status(500).json({ success: false, message: "Server error during token verification" });
+  }
+});
+
+
 module.exports = router;
