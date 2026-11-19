@@ -1,0 +1,33 @@
+{
+  "name": "yare-server",
+  "version": "2.0.0",
+  "description": "Yare Height Learning Hub API: REST, Paystack payments, Socket.io virtual classroom",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "smoke": "node scripts/smoke.js && node scripts/access.test.js"
+  },
+  "license": "ISC",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "backblaze-b2": "^1.7.1",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.15.2",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^7.0.3",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
+    "nodemon": "^3.1.10",
+    "socket.io-client": "^4.7.5"
+  }
+}
