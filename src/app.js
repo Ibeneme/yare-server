@@ -21,6 +21,7 @@ const corsOptions = {
   app.use(cors(corsOptions));
   app.options("/{*splat}", cors(corsOptions)); // or remove this line since app.use(cors(...)) already handles OPTIONS
 
+  
   // Keep the raw bytes: Paystack signs the exact body, so the webhook must hash those, not re-serialised JSON.
   app.use(
     express.json({
